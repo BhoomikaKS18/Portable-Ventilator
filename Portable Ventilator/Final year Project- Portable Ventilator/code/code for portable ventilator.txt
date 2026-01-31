@@ -1,0 +1,126 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include "MAX30100_PulseOximeter.h"
+#include <SoftwareSerial.h>
+// I2C LCD address and configuration
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+int a = 90;  // input value (initial)
+int b = 255; // output value (initial)
+#define REPORTING_PERIOD_MS     1000
+
+// PulseOximeter is the higher level interface to the sensor
+// it offers:
+//  * beat detection reporting
+//  * heart rate calculation
+//  * SpO2 (oxidation level) calculation
+PulseOximeter pox;
+bool messagesent=false;
+int mosfet=3;
+uint32_t tsLastReport = 0;
+int buz=13;
+SoftwareSerial Serialgsm(10,11);
+// Callback (registered below) fired when a pulse is detected
+void onBeatDetected()
+{
+  //  Serial.println("Beat!");
+}
+
+void setup()
+{
+   // Initialize LCD
+    lcd.init();
+    lcd.backlight(); // Turn on the backlight
+   pinMode(mosfet,OUTPUT);
+    pinMode(buz,OUTPUT);
+    // Print a welcome message
+    lcd.setCursor(0, 0);
+    lcd.print("Initializing...");
+    Serial.begin(9600);
+Serialgsm.begin(9600);
+    ///Serial.print("Initializing pulse oximeter..");
+
+    // Initialize the PulseOximeter instance
+    // Failures are generally due to an improper I2C wiring, missing power supply
+    // or wrong target chip
+    if (!pox.begin()) {
+      //  Serial.println("FAILED");
+        for(;;);
+    } else {
+       // Serial.println("SUCCESS");
+    }
+
+    // The default current for the IR LED is 50mA and it could be changed
+    //   by uncommenting the following line. Check MAX30100_Registers.h for all the
+    //   available options.
+    // pox.setIRLedCurrent(MAX30100_LED_CURR_7_6MA);
+
+    // Register a callback for the beat detection
+        pox.setIRLedCurrent(MAX30100_LED_CURR_7_6MA);
+    pox.setOnBeatDetectedCallback(onBeatDetected);
+}
+
+void loop()
+{
+    // Make sure to call update as fast as possible
+    pox.update();
+ if(millis()>10000 && !messagesent){
+  if(pox.getSpO2()<90){
+    lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Sending Message.");
+        String str = String ("Low Blood Oxygen Concentration Detected..");
+Serialgsm.println("AT+CMGF=1");    //Sets the GSM Module in Text Mode
+  delay(1000);  // Delay of 1000 milli seconds or 1 second
+  Serialgsm.println("AT+CMGS=\"+91 xxxxxxxxxxx\"\r"); // Replace x with mobile number
+  delay(1000);
+Serialgsm.println(str);// Th' e SMS text y70ou want t,m nb  o send
+  delay(100);
+  Serialgsm.println((char)26);// ASCII code of CTRL+Z
+  delay(2000);
+  messagesent=true;
+  }
+
+ }
+    // Asynchronously dump heart rate and oxidation levels to the serial
+    // For both, a value of 0 means "invalid"
+    if (millis() - tsLastReport > REPORTING_PERIOD_MS) {
+        
+         // Display the heart rate and SpO2 on the LCD
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("HR:");
+        lcd.print(int(pox.getHeartRate()));
+        lcd.print("");
+
+      
+        lcd.print(" SpO2:");
+        lcd.print(pox.getSpO2());
+        lcd.print("%");
+
+        a=pox.getSpO2();
+if (a <= 100) {
+    b = mapValueToB(a);
+   
+       lcd.setCursor(0, 1);
+        lcd.print("Power:");
+      
+    
+        lcd.print(b);
+        analogWrite(mosfet,b);
+  }
+  if(a<90){
+    digitalWrite(buz,1);
+  }else{
+    digitalWrite(buz,0);
+  }
+        tsLastReport = millis();
+    }
+}
+int mapValueToB(int aValue) {
+  // Ensure aValue is within the valid range
+  if (aValue < 90) aValue = 90;
+  if (aValue > 100) aValue = 100;
+
+  // Linear mapping of aValue to b
+  return 255 - ((aValue - 90) * 255) / (100 - 90);
+}
